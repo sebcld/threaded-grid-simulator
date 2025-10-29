@@ -300,6 +300,7 @@ static int load_config(const char *path){
     int monster_count_declared = -1;
     MProps *mp = NULL;
     int hero_count_declared = -1;
+    int last_path_hero = 0; /* index en heroes[] para continuar las lineas de PATH */
 
     while (fgets(line, sizeof(line), f)){
         rtrim_inplace(line);
@@ -339,18 +340,49 @@ static int load_config(const char *path){
         } else if (strncmp(s, "HERO_START", 10)==0){
             sscanf(s+10, "%d %d", &heroes[0].a.x, &heroes[0].a.y);
         } else if (strncmp(s, "HERO_PATH", 9)==0){
+            /* HERO_PATH en una linea (para hero 0) */
             parse_path_points(s+9, &heroes[0].path, &heroes[0].path_len);
+            last_path_hero = 0;
+        } else if (*s == '(') {
+            Point *buf = NULL; int len = 0;
+            if (parse_path_points(s, &buf, &len) == 0 && len > 0){
+                Hero *hh = &heroes[last_path_hero];
+                int new_len = hh->path_len + len;
+                if (new_len > MAX_PATH_POINTS) new_len = MAX_PATH_POINTS;
+                Point *newp = realloc(hh->path, sizeof(Point) * new_len);
+                if (!newp){ free(buf); fprintf(stderr, "OOM appending hero path\n"); fclose(f); return -1; }
+                hh->path = newp;
+                /* copiar tantos como quepan */
+                int copy = len;
+                if (hh->path_len + copy > MAX_PATH_POINTS) copy = MAX_PATH_POINTS - hh->path_len;
+                for (int i=0;i<copy;i++) hh->path[hh->path_len + i] = buf[i];
+                hh->path_len += copy;
+                free(buf);
+            }
         } else if (strncmp(s, "HERO_", 5)==0){
             /* Entradas HERO_n_*: asignar al elemento heroes[idx-1] si esta dentro del rango. */
             int idx = -1; char key[64];
             if (sscanf(s, "HERO_%d_%63s", &idx, key) == 2){
-                if (idx >= 1 && idx <= H){
+                if (idx >= 1){
+                    /* asegurar que heroes[] es lo suficientemente grande para contener idx */
+                    if (idx > H){
+                        int newH = idx;
+                        Hero *tmp = realloc(heroes, sizeof(Hero) * newH);
+                        if (!tmp){ fprintf(stderr, "OOM allocating heroes\n"); fclose(f); return -1; }
+                        /* initialize new entries */
+                        for (int hh_i = H; hh_i < newH; ++hh_i){
+                            tmp[hh_i].a.hp = 100; tmp[hh_i].a.attack = 10; tmp[hh_i].a.attack_range = 1; tmp[hh_i].a.alive = true;
+                            tmp[hh_i].path = NULL; tmp[hh_i].path_len = 0; tmp[hh_i].path_idx = 0; tmp[hh_i].engaged = false; tmp[hh_i].a.x = 0; tmp[hh_i].a.y = 0;
+                        }
+                        heroes = tmp;
+                        H = newH;
+                    }
                     Hero *hh = &heroes[idx-1];
                     if (strcmp(key, "HP")==0){ int v; if (sscanf(strchr(s,' '), "%d", &v)==1) hh->a.hp = v; }
                     else if (strcmp(key, "ATTACK_DAMAGE")==0){ int v; if (sscanf(strchr(s,' '), "%d", &v)==1) hh->a.attack = v; }
                     else if (strcmp(key, "ATTACK_RANGE")==0){ int v; if (sscanf(strchr(s,' '), "%d", &v)==1) hh->a.attack_range = v; }
                     else if (strcmp(key, "START")==0){ int x,y; if (sscanf(strchr(s,' '), "%d %d", &x,&y)==2){ hh->a.x = x; hh->a.y = y; } }
-                    else if (strcmp(key, "PATH")==0){ char *p = strchr(s, '('); if (p) parse_path_points(p, &hh->path, &hh->path_len); }
+                    else if (strcmp(key, "PATH")==0){ char *p = strchr(s, '('); if (p) { parse_path_points(p, &hh->path, &hh->path_len); last_path_hero = idx-1; } }
                 } else {
                     /* indice fuera de rango: ignorar */
                 }
